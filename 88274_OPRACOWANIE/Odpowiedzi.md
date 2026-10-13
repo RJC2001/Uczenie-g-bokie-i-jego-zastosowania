@@ -6,49 +6,49 @@
 
 Czym różni się `tf.constant` od `tf.Variable`? Jaki jest odpowiednik zmiennej, którą da się trenować, w PyTorch?
 
-**Odpowiedź:**
+**Odpowiedź:** `tf.constant` tworzy niezmienny tensor (stałą w grafie) - nie można go modyfikować w miejscu. `tf.Variable` to zmienna trenowalna: jest mutowalna (`assign`, `assign_add`) i domyślnie śledzona przez `GradientTape`, więc to po niej liczymy gradienty. W PyTorch odpowiednikiem jest `torch.nn.Parameter` (tensor z `requires_grad=True` zarejestrowany w module) lub zwykły tensor z `requires_grad=True`.
 
 ### Pytanie 2
 
 Masz tensor `y_pred` o kształcie `(64, 1)` i `y` o kształcie `(64,)`. Jaki kształt będzie miało `y_pred - y` i dlaczego to groźne przy liczeniu MSE?
 
-**Odpowiedź:**
+**Odpowiedź:** Wynik ma kształt `(64, 64)`. Broadcast wyrównuje wymiary od tyłu: `(64,)` staje się `(1, 64)`, a `(64, 1)` i `(1, 64)` rozgłaszają się do `(64, 64)`. To groźne, bo MSE policzone po takiej macierzy uśrednia wszystkie `64 x 64` kombinacji zamiast 64 próbek - strata (i gradienty) są zafałszowane. Naprawa: `y_pred.squeeze(-1)` albo `y.reshape(-1, 1)`.
 
 ### Pytanie 3
 
 Dlaczego w pętli treningowej PyTorch musimy wywoływać `optimizer.zero_grad()` (lub `x.grad.zero_()`)? Co się stanie, jeśli o tym zapomnimy?
 
-**Odpowiedź:**
+**Odpowiedź:** W PyTorch gradienty **akumulują się**: każde `backward()` dodaje nowy gradient do już zapisanego w `.grad`. `zero_grad()` zeruje je przed kolejnym krokiem, żeby w danej iteracji gradient dotyczył tylko bieżącej straty. Jeśli o tym zapomnimy, gradienty sumują się między iteracjami, efektywny krok rośnie z każdą epoką i aktualizacje stają się błędne - trening rozbiega się.
 
 ### Pytanie 4
 
 Wyjaśnij, dlaczego autograd używa trybu odwrotnego (backpropagation), a nie różnic skończonych, do trenowania sieci.
 
-**Odpowiedź:**
+**Odpowiedź:** Backpropagation to autodiff w trybie odwrotnym: jedno przejście wstecz daje gradient skalarnej straty po **wszystkich** parametrach naraz, a jego koszt jest rzędu przejścia w przód (`O(liczba parametrów)`), i jest dokładny do precyzji `float`. Różnice skończone wymagałyby osobnego przejścia w przód dla każdego parametru (`O(liczba parametrów)` przebiegów) i dają wynik tylko przybliżony (błąd obcięcia, dobór kroku `h`). Dla milionów parametrów jest to niepraktyczne.
 
 ### Pytanie 5
 
 Co się dzieje z GD dla zbyt dużego learning rate? Jak dla straty kwadratowej wyznaczyć próg rozbieżności?
 
-**Odpowiedź:**
+**Odpowiedź:** Dla zbyt dużego learning rate kroki przestrzeliwują minimum: strata zaczyna oscylować i rośnie - GD staje się rozbieżne. Dla straty kwadratowej z hesjanem `H` (dla MSE: `H = (2/n) X^T X`) zbieżność jest wtedy i tylko wtedy, gdy `lr < 2/lambda_max`, gdzie `lambda_max` to największa wartość własna `H`. Stąd próg rozbieżności `lr_kryt = 2/lambda_max` (u nas `lambda_max = 4.3339`, czyli `lr_kryt = 0.4615`).
 
 ### Pytanie 6
 
 Podaj po dwa przykłady **parametrów** i **hiperparametrów** z dzisiejszych zajęć.
 
-**Odpowiedź:**
+**Odpowiedź:** Parametry (uczone przez algorytm): wagi `w` i bias `b` regresji liniowej (w PyTorch `model.weight`, `model.bias`; w TF zmienne `w`, `b`). Hiperparametry (ustawiane przez nas): learning rate `lr` oraz liczba epok (przykłady dodatkowe: rozmiar batcha, stopień wielomianu `D`, współczynnik regularyzacji `lambda`).
 
 ### Pytanie 7
 
 Jakie są zalety i wady mini-batch SGD w porównaniu z full-batch GD?
 
-**Odpowiedź:**
+**Odpowiedź:** Zalety mini-batch: dużo **tańszych** kroków (wiele aktualizacji na epokę), gradient zaszumiony, co działa regularyzująco i pomaga wydostać się z minimów lokalnych/płaskich, lepsza generalizacja i wykorzystanie pamięci/GPU. Wady: gradient jest tylko przybliżony (zaszumiony), zbieżność mniej gładka i trzeba dobrać dodatkowe hiperparametry (rozmiar batcha, lr), a szum utrudnia precyzyjne dojście do optimum. Full-batch: dokładny gradient i stabilna zbieżność, ale jeden drogi krok na epokę, duże zużycie pamięci i łatwo utknąć.
 
 ### Pytanie 8
 
 Dlaczego do wyboru stopnia wielomianu nie możemy użyć błędu na zbiorze treningowym? Do czego służy zbiór walidacyjny, a do czego testowy?
 
-**Odpowiedź:**
+**Odpowiedź:** Błąd treningowy maleje monotonicznie wraz ze wzrostem pojemności (stopnia `D`), więc jego minimum zawsze wypada dla modelu maksymalnie złożonego - nie wykrywa przeuczenia. Dlatego stopień wybieramy na **zbiorze walidacyjnym** (dane nieużywane w treningu, ale też nie testowe) - na nim widać minimum krzywej U. **Zbiór testowy** służy do jednorazowej, bezstronnej oceny już wybranego modelu i nie wolno go używać do strojenia hiperparametrów.
 
 ## Lab 02
 
