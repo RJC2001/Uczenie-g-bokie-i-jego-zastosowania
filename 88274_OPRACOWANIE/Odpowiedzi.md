@@ -12,25 +12,37 @@ Czym różni się `tf.constant` od `tf.Variable`? Jaki jest odpowiednik zmiennej
 
 Masz tensor `y_pred` o kształcie `(64, 1)` i `y` o kształcie `(64,)`. Jaki kształt będzie miało `y_pred - y` i dlaczego to groźne przy liczeniu MSE?
 
-**Odpowiedź:** Wynik ma kształt `(64, 64)`. Broadcast wyrównuje wymiary od tyłu: `(64,)` staje się `(1, 64)`, a `(64, 1)` i `(1, 64)` rozgłaszają się do `(64, 64)`. To groźne, bo MSE policzone po takiej macierzy uśrednia wszystkie `64 x 64` kombinacji zamiast 64 próbek - strata (i gradienty) są zafałszowane. Naprawa: `y_pred.squeeze(-1)` albo `y.reshape(-1, 1)`.
+**Odpowiedź:** Wynik ma kształt `(64, 64)`. Broadcast wyrównuje wymiary od tyłu: `(64,)` staje się `(1, 64)`, a `(64, 1)` i `(1, 64)` rozgłaszają się do `(64, 64)`:
+$$(64, 1) - (64,) \;\longrightarrow\; (64, 1) - (1, 64) \;\longrightarrow\; (64, 64).$$
+To groźne, bo MSE policzone po takiej macierzy uśrednia wszystkie `64 x 64` kombinacji zamiast 64 próbek - strata (i gradienty) są zafałszowane. Naprawa: `y_pred.squeeze(-1)` albo `y.reshape(-1, 1)`.
 
 ### Pytanie 3
 
 Dlaczego w pętli treningowej PyTorch musimy wywoływać `optimizer.zero_grad()` (lub `x.grad.zero_()`)? Co się stanie, jeśli o tym zapomnimy?
 
-**Odpowiedź:** W PyTorch gradienty **akumulują się**: każde `backward()` dodaje nowy gradient do już zapisanego w `.grad`. `zero_grad()` zeruje je przed kolejnym krokiem, żeby w danej iteracji gradient dotyczył tylko bieżącej straty. Jeśli o tym zapomnimy, gradienty sumują się między iteracjami, efektywny krok rośnie z każdą epoką i aktualizacje stają się błędne - trening rozbiega się.
+**Odpowiedź:** W PyTorch gradienty **akumulują się**: każde `backward()` dodaje nowy gradient do już zapisanego w `.grad`. Po $t$ krokach bez zerowania mamy więc
+$$g_t = \sum_{k=1}^{t}\nabla_\theta L_k \quad\text{zamiast}\quad \nabla_\theta L_t,$$
+a aktualizacja używa tego sumarycznego gradientu. `zero_grad()` zeruje go przed kolejnym krokiem, żeby w danej iteracji gradient dotyczył tylko bieżącej straty. Jeśli o tym zapomnimy, gradienty sumują się między iteracjami, efektywny krok rośnie z każdą epoką i aktualizacje stają się błędne - trening rozbiega się.
 
 ### Pytanie 4
 
 Wyjaśnij, dlaczego autograd używa trybu odwrotnego (backpropagation), a nie różnic skończonych, do trenowania sieci.
 
-**Odpowiedź:** Backpropagation to autodiff w trybie odwrotnym: jedno przejście wstecz daje gradient skalarnej straty po **wszystkich** parametrach naraz, a jego koszt jest rzędu przejścia w przód (`O(liczba parametrów)`), i jest dokładny do precyzji `float`. Różnice skończone wymagałyby osobnego przejścia w przód dla każdego parametru (`O(liczba parametrów)` przebiegów) i dają wynik tylko przybliżony (błąd obcięcia, dobór kroku `h`). Dla milionów parametrów jest to niepraktyczne.
+**Odpowiedź:** Backpropagation to autodiff w trybie odwrotnym: jedno przejście wstecz daje gradient skalarnej straty po **wszystkich** parametrach naraz, a jego koszt jest stałym czynnikiem rzędu jednego przejścia w przód - nie zależy od liczby parametrów $P$:
+$$\nabla_\theta L = \left[\frac{\partial L}{\partial \theta_1}, \dots, \frac{\partial L}{\partial \theta_P}\right] \quad\text{- koszt } O(1)\text{ przejść w przód}.$$
+Różnice skończone wymagałyby osobnego przejścia w przód dla każdego parametru:
+$$\frac{\partial L}{\partial \theta_i} \approx \frac{L(\theta + h e_i) - L(\theta - h e_i)}{2h} \quad\text{- koszt } O(P)\text{ przejść w przód},$$
+i dają wynik tylko przybliżony (błąd obcięcia, dobór kroku $h$). Dla milionów parametrów jest to niepraktyczne.
 
 ### Pytanie 5
 
 Co się dzieje z GD dla zbyt dużego learning rate? Jak dla straty kwadratowej wyznaczyć próg rozbieżności?
 
-**Odpowiedź:** Dla zbyt dużego learning rate kroki przestrzeliwują minimum: strata zaczyna oscylować i rośnie - GD staje się rozbieżne. Dla straty kwadratowej z hesjanem `H` (dla MSE: `H = (2/n) X^T X`) zbieżność jest wtedy i tylko wtedy, gdy `lr < 2/lambda_max`, gdzie `lambda_max` to największa wartość własna `H`. Stąd próg rozbieżności `lr_kryt = 2/lambda_max` (u nas `lambda_max = 4.3339`, czyli `lr_kryt = 0.4615`).
+**Odpowiedź:** Dla zbyt dużego learning rate kroki przestrzeliwują minimum: strata zaczyna oscylować i rośnie - GD staje się rozbieżne. Dla straty kwadratowej z hesjanem $H$ (dla MSE: $H = \frac{2}{n}X^\top X$) zbieżność jest wtedy i tylko wtedy, gdy
+$$\eta < \frac{2}{\lambda_{max}(H)},$$
+gdzie $\lambda_{max}$ to największa wartość własna $H$. Stąd próg rozbieżności
+$$\eta_{crit} = \frac{2}{\lambda_{max}}$$
+(u nas $\lambda_{max} = 4.3339$, czyli $\eta_{crit} = 0.4615$).
 
 ### Pytanie 6
 
@@ -42,7 +54,9 @@ Podaj po dwa przykłady **parametrów** i **hiperparametrów** z dzisiejszych za
 
 Jakie są zalety i wady mini-batch SGD w porównaniu z full-batch GD?
 
-**Odpowiedź:** Zalety mini-batch: dużo **tańszych** kroków (wiele aktualizacji na epokę), gradient zaszumiony, co działa regularyzująco i pomaga wydostać się z minimów lokalnych/płaskich, lepsza generalizacja i wykorzystanie pamięci/GPU. Wady: gradient jest tylko przybliżony (zaszumiony), zbieżność mniej gładka i trzeba dobrać dodatkowe hiperparametry (rozmiar batcha, lr), a szum utrudnia precyzyjne dojście do optimum. Full-batch: dokładny gradient i stabilna zbieżność, ale jeden drogi krok na epokę, duże zużycie pamięci i łatwo utknąć.
+**Odpowiedź:** Pełny gradient i jego estymator z mini-batcha $B$:
+$$g = \frac1n\sum_{i=1}^n\nabla_\theta\ell_i(\theta), \qquad g_B = \frac1{|B|}\sum_{i\in B}\nabla_\theta\ell_i(\theta).$$
+Zalety mini-batch: dużo **tańszych** kroków (wiele aktualizacji na epokę), gradient zaszumiony, co działa regularyzująco i pomaga wydostać się z minimów lokalnych/płaskich, lepsza generalizacja i wykorzystanie pamięci/GPU. Wady: gradient jest tylko przybliżony (zaszumiony), zbieżność mniej gładka i trzeba dobrać dodatkowe hiperparametry (rozmiar batcha, lr), a szum utrudnia precyzyjne dojście do optimum. Full-batch: dokładny gradient i stabilna zbieżność, ale jeden drogi krok na epokę, duże zużycie pamięci i łatwo utknąć.
 
 ### Pytanie 8
 

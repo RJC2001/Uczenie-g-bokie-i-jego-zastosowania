@@ -10,15 +10,22 @@
 - GPU niewidoczne, `DEVICE = cpu`
 
 ### Zadanie 1.1 - Standaryzacja batcha obrazów (broadcasting, NHWC vs NCHW)
+Standaryzacja per kanał: $z = (x - \mu_c)/\sigma_c$, gdzie $\mu_c$ i $\sigma_c$ liczymy po wszystkich obrazach i pikselach danego kanału (osie $N, H, W$).
+
 - TF średnie per kanał = [0, -0, -0], std = [1, 1, 1]
 - PyTorch średnie per kanał = [0, 0, 0]
 - Zgodność TF vs PyTorch = `True`
 
 ### Zadanie 1.2 - Macierz odległości bez pętli (wektoryzacja)
+Odległości liczymy macierzowo, bez pętli:
+$$D_{ij} = \|x_i - y_j\|^2 = \|x_i\|^2 + \|y_j\|^2 - 2\,x_i^\top y_j .$$
+
 - Zgodność z wersją pętlową: NumPy `True`, Torch `True`
 - n = 150: pętla 0.120 s vs wektorowo 0.00614 s (przyspieszenie ~20x)
 
 ### 2.4 Gradient na całej siatce punktów i porównanie z pochodną analityczną
+Dla $f(x) = x^2 \sin x$ pochodna analityczna wynosi $f'(x) = 2x\sin x + x^2\cos x$.
+
 - maks. |TF - analityczna| = 3.8e-06
 - maks. |PyTorch - analityczna| = 1.9e-06
 
@@ -30,11 +37,19 @@
 - PyTorch: (0.27105, -0.65559)
 
 ### Zadanie 2.2 - Sprawdzanie gradientu różnicami skończonymi (gradient check)
+Pochodną cząstkową przybliżamy różnicą centralną, a jakość sprawdzenia mierzymy błędem względnym:
+$$\frac{\partial f}{\partial w_i} \approx \frac{f(\mathbf w + h\mathbf e_i) - f(\mathbf w - h\mathbf e_i)}{2h}, \qquad \mathrm{err} = \frac{\|g_{num} - g_{bp}\|}{\|g_{num}\| + \|g_{bp}\|}.$$
+
 - błąd względny (h = 1e-5) = 1.47e-11
 
 ![Gradient check](img/lab01_2_2_gradient_check.png)
 
 ### 3. Regresja liniowa od zera
+Model i strata:
+$$\hat y = \mathbf w^\top \mathbf x + b, \qquad L(\mathbf w, b) = \frac1n\sum_{i=1}^n(\hat y_i - y_i)^2 .$$
+Krok spadku gradientu (full-batch):
+$$\mathbf w \leftarrow \mathbf w - \eta\,\frac{2}{n}X^\top(\hat{\mathbf y} - \mathbf y), \qquad b \leftarrow b - \eta\,\frac{2}{n}\sum_{i=1}^n(\hat y_i - y_i).$$
+
 - GD: w = 2.5128, b = -1.0130, MSE = 0.9589
 - `polyfit`: w = 2.5128, b = -1.0130
 
@@ -73,6 +88,10 @@
 ![TensorFlow GradientTape](img/lab01_3_2_tf_gradienttape.png)
 
 ### Zadanie 4.1 - Eksperyment: za mały, dobry i za duży learning rate
+Dla MSE hesjan względem parametrów (z kolumną jedynek $\tilde X = [X, \mathbf 1]$) ma postać
+$$H = \frac{2}{n}\tilde X^\top \tilde X,$$
+a GD jest zbieżny, gdy $\eta < 2/\lambda_{max}(H)$.
+
 - `lambda_min = 0.0480`, `lambda_max = 4.3339`, uwarunkowanie = 90.3
 - `lr_kryt = 2/lambda_max = 0.4615`
 - `lr = 0.4522` (0.98 * lr_kryt): zbieżność w 8 epokach do 1% od optimum
@@ -90,6 +109,9 @@
 ![Wpływ learning rate](img/lab01_4_1_learning_rate.png)
 
 ### Zadanie 5.1 - Implementacja mini-batch SGD i porównanie rozmiarów batcha
+Gradient na mini-batchu $B$ jest estymatorem gradientu pełnego:
+$$\mathbf g_B = \frac{2}{|B|}\sum_{i\in B}(\hat y_i - y_i)\,\mathbf x_i .$$
+
 - 4 epoki, lr = 0.05
 - B = 16: MSE = 0.3558
 - B = 64: MSE = 0.2928
@@ -106,16 +128,26 @@
 ![Dane wielomianowe](img/lab01_6_dane_wielomian.png)
 
 ### Zadanie 6.1 - Krzywa train vs walidacja w funkcji stopnia wielomianu
+Model wielomianowy jest liniowy względem parametrów:
+$$\hat y = \sum_{d=0}^{D} w_d x^d = \mathbf w^\top \phi(x), \qquad \phi(x) = [1, x, x^2, \dots, x^D].$$
+
 - najlepszy stopień wg walidacji: D = 3, MSE val = 0.0911
 
 ![Stopień wielomianu](img/lab01_6_1_stopien_wielomianu.png)
 
 ### Zadanie 6.2 - Regularyzacja L2 (ridge) jako "lekarstwo" na przeuczenie
+Rozwiązanie analityczne z karą L2:
+$$\mathbf w_\lambda = (\Phi^\top\Phi + n\lambda D)^{-1}\Phi^\top\mathbf y, \qquad D = \mathrm{diag}(0, 1, \dots, 1).$$
+Macierz $D$ zeruje karę dla biasu - w kodzie korygowany jest element $[0,0]$, więc karane są tylko współczynniki przy cechach.
+
 - najlepsza `lambda = 3.16e-05`, MSE val = 0.1050
 
 ![Ridge](img/lab01_6_2_ridge.png)
 
 ### Zadanie dodatkowe (dla chętnych) - GD, momentum i Adam na funkcji Rosenbrocka
+Funkcja testowa ma minimum w $(1, 1)$:
+$$f(x, y) = (1 - x)^2 + 100(y - x^2)^2 .$$
+
 - start (-1.5, 2), 300 kroków
 - odległość od minimum (1,1): GD (lr=1e-3) = 2.314, momentum (lr=2e-4) = 2.046, Adam (lr=0.02) = 2.065
 - momentum (lr=1e-3) = 0.384 (najbliżej minimum)
