@@ -56,49 +56,81 @@ Dlaczego do wyboru stopnia wielomianu nie możemy użyć błędu na zbiorze tren
 
 Zapisz regułę uczenia perceptronu. Czym różni się od spadku gradientu? Kiedy perceptron gwarantuje zbieżność?
 
-**Odpowiedź:**
+**Odpowiedź:** Dla próbki $(\mathbf x_i, y_i)$, $y_i \in \{0, 1\}$, i predykcji $\hat y_i = \text{step}(\mathbf w^\top \mathbf x_i + b)$ reguła ma postać
+$$\mathbf w \leftarrow \mathbf w + \eta\,(y_i - \hat y_i)\,\mathbf x_i, \qquad b \leftarrow b + \eta\,(y_i - \hat y_i).$$
+Aktualizacja następuje tylko dla błędnie sklasyfikowanych próbek: przy fałszywie negatywnej dodajemy $\eta\mathbf x_i$ do wag, przy fałszywie pozytywnej odejmujemy. To **nie jest** spadek gradientu - funkcja progowa ma pochodną zero prawie wszędzie, więc nie ma tu gradientu straty; jest to reguła heurystyczna z krokiem o stałej długości. Spadek gradientu minimalizuje różniczkowalną stratę i przesuwa parametry w kierunku przeciwnym do gradientu, a perceptron tylko obraca/przesuwa hiperpłaszczyznę po każdym błędzie. Twierdzenie Novikoffa gwarantuje zbieżność w skończonej liczbie błędnych aktualizacji (ograniczonej przez $(R/\gamma)^2$, gdzie $R$ to maksymalna norma próbki, a $\gamma$ margines) **tylko wtedy, gdy dane są liniowo separowalne**. Dla danych nieseparowalnych (np. XOR) algorytm nigdy się nie zatrzyma - w naszym eksperymencie błędy nie zniknęły i oscylowały przez wszystkie 100 epok.
 
 ### Pytanie 2
 
 Dlaczego pojedynczy perceptron nie rozwiąże problemu XOR, a MLP z jedną warstwą ukrytą tak?
 
-**Odpowiedź:**
+**Odpowiedź:** Pojedynczy perceptron dzieli płaszczyznę **jedną prostą** (hiperpłaszczyzną) $\mathbf w^\top\mathbf x + b = 0$. W XOR punkty $(0,0)$ i $(1,1)$ należą do klasy 0, a $(0,1)$ i $(1,0)$ do klasy 1 - leżą naprzemiennie na przekątnych kwadratu. Każda prosta pozostawia po jednej stronie parę punktów różnych klas, więc nie da się osiągnąć 100% trafności; w eksperymencie perceptron utknął na 50% (4 punkty) i 53% (XOR zaszumiony).
+
+MLP z warstwą ukrytą najpierw **przekształca wejście** $\mathbf h = \tanh(W_1\mathbf x + \mathbf b_1)$ w nową przestrzeń cech, a dopiero potem dzieli ją warstwa wyjściowa. Neurony ukryte mogą wykrywać dwie różne przekątne (dwie proste), a wyjście łączy ich odpowiedzi - granica decyzyjna staje się **kawałkami liniowa** i może oddzielić klasy XOR. W naszym zadaniu sieć 2-4-1 z tanh osiągnęła BCE = 0.00047 i predykcje `[0, 1, 1, 0]`.
 
 ### Pytanie 3
 
 Dlaczego sieć bez nieliniowych funkcji aktywacji (dowolnie głęboka) jest równoważna modelowi liniowemu?
 
-**Odpowiedź:**
+**Odpowiedź:** Złożenie przekształceń afinicznych jest przekształceniem afinicznym. Już dla dwóch warstw:
+$$W_2(W_1\mathbf x + \mathbf b_1) + \mathbf b_2 = (W_2W_1)\mathbf x + (W_2\mathbf b_1 + \mathbf b_2),$$
+czyli cała sieć redukuje się do jednej macierzy $W = W_2W_1$ i jednego biasu. Przez indukcję to samo zachodzi dla dowolnej liczby warstw: produkt macierzy jest macierzą, a suma przesunięć - przesunięciem. Taka sieć ma dokładnie taką samą pojemność jak regresja liniowa/pojedynczy perceptron (z liniową granicą decyzyjną) i nie rozwiąże XOR. Dopiero nieliniowa aktywacja między warstwami przerywa to uproszczenie i pozwala aproksymować funkcje nieliniowe.
 
 ### Pytanie 4
 
 Wyjaśnij zjawisko znikającego gradientu. Dlaczego sigmoid jest na nie podatny bardziej niż ReLU?
 
-**Odpowiedź:**
+**Odpowiedź:** Podczas backpropu gradient straty względem wczesnej warstwy jest iloczynem pochodnych kolejnych warstw (reguła łańcuchowa):
+$$\frac{\partial L}{\partial W_1} \propto \prod_{l} f'(z_l)\, W_l.$$
+Jeśli każdy czynnik ma moduł istotnie mniejszy od 1, iloczyn maleje **wykładniczo** z głębokością - pierwsze warstwy dostają gradient praktycznie równy zero i przestają się uczyć (analogicznie może wystąpić eksplozja gradientu, gdy czynniki są > 1).
+
+Sigmoid ma pochodną $\sigma(z)(1-\sigma(z)) \le 0.25$, a dodatkowo nasyca się: dla $|z| \gtrsim 4$ pochodna jest bliska zeru. Iloczyn wielu czynników $\le 0.25$ daje np. $0.25^{20} \approx 10^{-12}$. ReLU ma pochodną **1** dla $z > 0$ i 0 dla $z < 0$, więc dla aktywnych neuronów gradient nie jest tłumiony; z inicjalizacją He (dobraną do wariancji ReLU) skala aktywacji i gradientów pozostaje w przybliżeniu stała. W naszym eksperymencie stosunek normy gradientu pierwszej warstwy do ostatniej wyniósł `7.5e-14` dla sigmoidu, `0.56` dla tanh i `1.4` dla ReLU. Tanh jest lepszy od sigmoidu (pochodna do 1, wycentrowanie wokół 0), ale nadal nasyca się dla dużych $|z|$.
 
 ### Pytanie 5
 
 Ile parametrów ma MLP o architekturze 10 -> 32 -> 16 -> 3? Pokaż obliczenia.
 
-**Odpowiedź:**
+**Odpowiedź:** Warstwa gęsta ma $(n_{in} + 1)\,n_{out}$ parametrów (macierz wag plus bias). Kolejno:
+- 10 -> 32: $(10 + 1)\cdot 32 = 352$,
+- 32 -> 16: $(32 + 1)\cdot 16 = 528$,
+- 16 -> 3: $(16 + 1)\cdot 3 = 51$.
+
+Razem: $352 + 528 + 51 = \mathbf{931}$ parametrów. Funkcje aktywacji nie mają parametrów.
 
 ### Pytanie 6
 
 Dlaczego dla sigmoidu z BCE gradient po pobudzeniu wyjścia upraszcza się do $\hat y - y$? Jaka jest korzyść z używania `BCEWithLogitsLoss` (lub `from_logits=True`)?
 
-**Odpowiedź:**
+**Odpowiedź:** Dla $\hat y = \sigma(z)$ i binarnej entropii krzyżowej
+$$L = -\big[y\log\hat y + (1-y)\log(1-\hat y)\big]$$
+pochodna po wyjściu wynosi
+$$\frac{\partial L}{\partial \hat y} = -\frac{y}{\hat y} + \frac{1-y}{1-\hat y} = \frac{\hat y - y}{\hat y(1-\hat y)}.$$
+Pochodna sigmoidu to $\frac{\partial \hat y}{\partial z} = \hat y(1-\hat y)$, więc po pomnożeniu mianownik się skraca:
+$$\frac{\partial L}{\partial z} = \frac{\hat y - y}{\hat y(1-\hat y)}\cdot \hat y(1-\hat y) = \hat y - y.$$
+Dzięki temu gradient jest prosty i dobrze uwarunkowany nawet przy dużych błędach.
+
+`BCEWithLogitsLoss` (PyTorch) i `from_logits=True` (Keras) łączą sigmoidę i BCE w jedną operację liczoną numerycznie stabilnie (w praktyce przez stabilną postać softplus, bez jawnego liczenia sigmoidy i logarytmu). Unika się w ten sposób liczenia `log(0)` i przepełnienia/utraty precyzji przy najpierw `sigmoid`, a potem `log`; wynik jest dokładniejszy i szybszy. Dlatego w PyTorch model zwraca **logity** (bez sigmoidy), a dopiero `BCEWithLogitsLoss` robi resztę.
 
 ### Pytanie 7
 
 Czym różni się Sequential API od Functional API w Keras? Podaj przykład architektury, której nie zbudujesz w Sequential.
 
-**Odpowiedź:**
+**Odpowiedź:** `keras.Sequential` to **liniowy stos warstw**: każda warstwa ma dokładnie jedno wejście i jedno wyjście, a wyjście poprzedniej jest wejściem następnej. Nie da się w nim rozgałęziać, łączyć tensorów ani mieć wielu wejść/wyjść. **Functional API** traktuje warstwy jak funkcje wywoływane na tensorach symbolicznych i pozwala zbudować dowolny graf (DAG): wiele wejść i wyjść, konkatenacje, rozgałęzienia, współdzielone warstwy, połączenia pomijające. Model definiuje się przez `keras.Model(inputs=..., outputs=...)`.
+
+Przykład, którego nie zbudujesz w Sequential, jest w notebooku: wejście jest doklejane przez `Concatenate` do wyjścia drugiej warstwy ukrytej (`[x, h2]`), a dopiero potem trafia do warstwy wyjściowej - to połączenie pomijające (skip connection). Inne przykłady: residual block $y = \text{ReLU}(F(x) + x)$, model z dwoma osobnymi wejściami (np. obraz + metadane) albo z dwoma wyjściami (klasa + regresja pomocnicza).
 
 ### Pytanie 8
 
 Wymień kroki jednej iteracji pętli treningowej PyTorch. Co robią `model.train()`, `model.eval()` i `torch.no_grad()`?
 
-**Odpowiedź:**
+**Odpowiedź:** Jedna iteracja (dla batcha):
+1. `opt.zero_grad()` - wyzerowanie gradientów z poprzedniego kroku (w PyTorch `.grad` się akumuluje),
+2. `logity = model(xb)` - przejście w przód,
+3. `loss = loss_fn(logity, yb)` - policzenie straty,
+4. `loss.backward()` - backpropagation i wypełnienie `.grad` wszystkich parametrów,
+5. `opt.step()` - aktualizacja parametrów przez optymalizator.
+
+`model.train()` ustawia tryb treningowy: aktywne są dropout i augmentacje zależne od trybu, a BatchNorm używa statystyk bieżącego batcha. `model.eval()` przełącza tryb ewaluacji: dropout jest wyłączony, a BatchNorm korzysta z uśrednionych statystyk zgromadzonych podczas treningu. `torch.no_grad()` wyłącza budowanie grafu obliczeniowego (nie zapisuje pośrednich aktywacji), co oszczędza pamięć i przyspiesza ewaluację/predykcję; stosuje się go razem z `model.eval()` przy walidacji i inferencji.
 
 ## Lab 03
 
