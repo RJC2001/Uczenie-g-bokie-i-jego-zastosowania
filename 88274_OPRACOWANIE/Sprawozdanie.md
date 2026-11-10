@@ -282,6 +282,158 @@ $$f(x, y) = (1 - x)^2 + 100(y - x^2)^2 .$$
 
 ## Lab 03
 
+### 0. Środowisko i tryb pracy
+- `SZYBKI_TRYB = False` (tryb pełny), `SEED = 42` (`keras.utils.set_random_seed`)
+- NumPy 2.2.6, TensorFlow 2.21.0 / Keras 3.12.4 (backend `tensorflow`), scikit-learn 1.7.2
+- brak GPU (`tf.config.list_physical_devices("GPU") == []`) - TensorFlow na natywnym Windowsie nie obsługuje CUDA, wszystkie obliczenia wykonano na CPU
+- Fashion-MNIST: 50 000 / 10 000 / 10 000 (train / val / test), piksele przeskalowane do [0, 1]
+- California Housing: 20 640 rekordów -> 12 384 / 4 128 / 4 128; `StandardScaler` dopasowany **tylko** na zbiorze treningowym
+
+### 1. Trening demonstracyjny (MLP 784-128-10)
+Najprostsza sieć: `Flatten(784) -> Dense(128, relu) -> Dense(10, softmax)`, 101 770 parametrów, Adam (lr = 1e-3), 10 epok, batch 128.
+
+- czas treningu: 18.4 s (CPU); `accuracy` treningowa 0.9045, walidacyjna 0.8817, `val_loss` 0.3428 (minimum w ostatniej epoce)
+- `predict` zwraca rozkłady prawdopodobieństw - suma w każdym wierszu = 1.0, więc `argmax` daje klasę o największym prawdopodobieństwie
+
+![Przykładowe obrazy Fashion-MNIST](img/lab03_1_probki_fashion_mnist.png)
+
+![Krzywe uczenia MLP demo](img/lab03_1_krzywe_demo.png)
+
+![Macierz pomyłek MLP demo](img/lab03_1_macierz_pomylek_demo.png)
+
+### Zadanie 1.1 - Głębszy MLP na Fashion-MNIST
+Architektura `784 -> 256 -> 128 -> 10`, Adam (lr = 1e-3), `sparse_categorical_crossentropy`, 15 epok, batch 128, walidacja na wydzielonej 1/6 części treningu.
+
+- czas treningu: 33.3 s (CPU)
+- dokładność walidacyjna (ostatnia epoka) = **0.8843**, testowa = **0.8754** (test loss = 0.3940)
+- minimum `val_loss` wypada w epoce **8** (0.3496); potem strata walidacyjna rośnie do 0.3750 w epoce 15, choć treningowa nadal spada (0.247 -> 0.1785). Luka `accuracy - val_accuracy` w ostatniej epoce to 0.050, a `accuracy` treningowa dochodzi do 0.934 - to początek przeuczenia
+- liczba parametrów: ręcznie $784\cdot256+256 = 200\,960$, $256\cdot128+128 = 32\,896$, $128\cdot10+10 = 1\,290$; suma **235 146** = `model_mlp.count_params()`
+
+![Krzywe uczenia MLP 256-128](img/lab03_1_1_krzywe_mlp.png)
+
+### Zadanie 1.2 - Analiza błędów
+Dokładność per klasa (test): Spodnie 0.983, Torba 0.983, Sneaker 0.975, Botek 0.931, Sandał 0.926, Sukienka 0.900, Płaszcz 0.819, T-shirt/top 0.813, Koszula 0.746, **Sweter 0.678**.
+
+- najczęściej mylona para: **T-shirt/top -> Koszula** (139 próbek); dalej Sweter/Płaszcz oraz Koszula/T-shirt
+- przyczyny: Koszula i T-shirt to cienkie, podobnie zarysowane fasony o jasnych pikselach, a Sweter i Płaszcz dzielą gruby, bezrękawny kształt. Po `Flatten` do 784 cech model nie widzi lokalnych detali (kołnierzyk, guziki, ściągacz rękawa), więc myli klasy różniące się głównie nimi - stąd najgorsze wyniki dla Koszuli i Swetra
+
+![Dokładność per klasa](img/lab03_1_2_dokladnosc_klas.png)
+
+![Błędne predykcje MLP](img/lab03_1_2_bledne_predykcje.png)
+
+### Zadanie 2.1 - Baseline liniowy
+- baseline średniej: MAE = 0.905, RMSE = 1.145 (jednostka: 100 tys. $)
+- regresja liniowa: MAE = **0.533**, RMSE = **0.750**, czyli 41.1% mniej MAE niż baseline i wartości zgodne z oczekiwanymi (ok. 0.53)
+- na cechach standaryzowanych największe znaczenie mają `MedInc` (+0.860) oraz położenie: `Latitude` (-0.888) i `Longitude` (-0.862)
+
+### Zadanie 2.2 - Sieć do regresji
+Model `8 -> 64 -> 64 -> 1` (wyjście liniowe), Adam (lr = 1e-3), strata MSE, metryka MAE, 60 epok, batch 64.
+
+| model | MAE | RMSE |
+|---|---:|---:|
+| baseline (średnia) | 0.905 | 1.145 |
+| regresja liniowa | 0.533 | 0.750 |
+| MLP 64-64 | **0.360** | **0.530** |
+
+- czas treningu 29.9 s; wyjście trzeba spłaszczyć `ravel()` - bez tego `y - y_pred` rozgłasza się do macierzy `(n, n)`
+- 184 z 4128 próbek testowych ma cenę **uciętą na 5.0** (500 tys. $). Na wykresie widać to jako pionową linię w $x = 5$ i niedoszacowanie najdroższych dzielnic (większość prognoz w 2.7-4.5). To ograniczenie danych, nie modelu: górny przedział jest sztucznie obcięty, więc sieć nie ma z czego nauczyć się wartości powyżej 5
+
+![Krzywe uczenia - regresja](img/lab03_2_2_krzywe_regresja.png)
+
+![Wartości prawdziwe vs przewidziane](img/lab03_2_2_y_vs_pred.png)
+
+### Zadanie 3.1 - Trzy callbacki naraz
+`EarlyStopping(patience=10, restore_best_weights=True)`, `ModelCheckpoint("najlepszy_reg.keras", save_best_only=True)`, `ReduceLROnPlateau(factor=0.5, patience=4, min_lr=1e-5)`.
+
+- trening zatrzymał się po **152 z 200** epok; najlepsza epoka wg `val_loss`: **142**
+- learning rate: 1e-3 -> 5e-4 (ep. 10) -> 2.5e-4 (39) -> 1.25e-4 (49) -> 6.25e-5 (58) -> 3.1e-5 (65) -> 1.6e-5 (72) -> 1e-5 (78), dalej `min_lr`
+- model wczytany z checkpointu: MAE = **0.365**, RMSE = **0.540** (zad. 2.2: 0.360 / 0.530) - praktycznie ten sam poziom, różnica wynika z wyboru epoki po `val_loss` (MSE), a nie po MAE
+- wcześniejsza demonstracja `EarlyStopping` na Fashion-MNIST: 11 z 50 epok, najlepsza epoka 8
+
+![EarlyStopping - krzywe uczenia](img/lab03_3_krzywe_earlystopping.png)
+
+![Learning rate z ReduceLROnPlateau](img/lab03_3_1_learning_rate.png)
+
+### Zadanie 4.1 - Porównanie optymalizatorów
+| optymalizator | najlepsza `val_accuracy` | epoka | `val_loss` (ostatnia) |
+|---|---:|---:|---:|
+| SGD lr = 0.01 | 0.8354 | 10 | 0.4767 |
+| SGD + momentum 0.9, lr = 0.01 | 0.8722 | 9 | 0.3622 |
+| RMSprop lr = 0.001 | **0.8859** | 10 | **0.3226** |
+| Adam lr = 0.001 | 0.8825 | 8 | 0.3428 |
+
+- SGD bez momentum jest wyraźnie najsłabszy: pojedynczy krok o stałej długości bez wygładzania oscylacji w "wąskich dolinach" funkcji straty
+- momentum 0.9 wyraźnie przyspiesza (0.8354 -> 0.8722), a metody adaptacyjne (RMSprop, Adam) osiągają najlepsze wyniki już po kilku epokach
+
+![SGD vs Adam - demonstracja](img/lab03_4_sgd_vs_adam.png)
+
+![Porównanie optymalizatorów](img/lab03_4_1_optymalizatory.png)
+
+### Zadanie 4.2 - Wpływ learning rate (Adam)
+| lr | strata treningowa (ost.) | `val_accuracy` (ost.) | interpretacja |
+|---:|---:|---:|---|
+| 1e-4 | 0.3917 | 0.8552 | za mały - bardzo wolny spadek |
+| 1e-3 | **0.2638** | **0.8817** | najlepszy kompromis |
+| 1e-2 | 0.2994 | 0.8662 | lekko za duży - gorsze minimum |
+| 1e-1 | 0.9790 | 0.6064 | stanowczo za duży - oscylacje, brak zbieżności |
+
+Przy 0.1 strata w pierwszych epokach skacze i utyka na ok. 1.0; żaden wariant nie dał `nan`, ale widać już obraz rozbieżności.
+
+![Wpływ learning rate](img/lab03_4_2_learning_rate.png)
+
+### 5. Celowe przeuczenie i regularyzacja
+Sieć `784 -> 3 x 512 -> 10` (932 362 parametry), trening na 1000 obrazów, 60 epok: `accuracy` treningowa **0.996**, walidacyjna **0.815**, minimum `val_loss` już w epoce 6 (0.5954), potem strata walidacyjna rośnie - klasyczne przeuczenie.
+
+![Przeuczenie - krzywe uczenia](img/lab03_5_przeuczenie.png)
+
+### Zadanie 5.1 - Dropout i L2
+- Dropout 0.5: train 0.914 / val 0.8147, luka **0.099**, min `val_loss` 0.5875 (ep. 12)
+- L2 $\lambda = 10^{-3}$: train 0.964 / val 0.7859, luka 0.178, min `val_loss` 1.0605 (ep. 54)
+- L2 działa, ale $\lambda = 10^{-3}$ jest za duże dla tej sieci; dodatkowo kara $\lambda\sum w^2$ jest doliczana do raportowanej straty, więc jej `val_loss` nie jest wprost porównywalny z pozostałymi - porównujemy `accuracy` i lukę
+
+![Dropout 0.5 - krzywe uczenia](img/lab03_5_1_dropout.png)
+
+![L2 1e-3 - krzywe uczenia](img/lab03_5_1_l2.png)
+
+### Zadanie 5.2 - BatchNormalization i zestawienie
+
+| wariant | najlepsza `val_accuracy` | `val_accuracy` (ost.) | `accuracy` train (ost.) | luka train-val | min `val_loss` | epoka |
+|---|---:|---:|---:|---:|---:|---:|
+| bez regularyzacji | 0.8158 | 0.8151 | 0.996 | 0.181 | 0.5954 | 6 |
+| Dropout 0.5 | **0.8181** | 0.8147 | 0.914 | **0.099** | 0.5875 | 12 |
+| L2 1e-3 | 0.8114 | 0.7859 | 0.964 | 0.178 | 1.0605 | 54 |
+| BatchNorm | 0.8114 | 0.8098 | 1.000 | 0.190 | 0.6896 | 10 |
+| BatchNorm + Dropout 0.3 | 0.8120 | 0.7992 | 0.992 | 0.193 | 0.6247 | 7 |
+
+**Hipoteza (przed uruchomieniem):** BatchNorm najbardziej przyspieszy spadek `val_loss` (stabilizacja aktywacji), ale słabiej niż Dropout ograniczy przeuczenie; największą lukę train-val powinien mieć wariant BN, a najmniejszą Dropout.
+
+**Weryfikacja:** częściowo potwierdzona. Luka train-val rzeczywiście układa się zgodnie z hipotezą (BN 0.190 i BN+Dropout 0.193 > bez regularyzacji 0.181 > Dropout 0.099). Nie potwierdziło się natomiast przyspieszenie: BN nie poprawił `val_accuracy` (0.811 vs 0.815), a jego `val_loss` w pierwszych 20 epokach jest bardzo niestabilny (skoki do 1.6-2.0); wariant łączony też nie połączył zalet. Na płytkim MLP i małym zbiorze skuteczną regularyzacją okazał się Dropout.
+
+![Regularyzacja - strata walidacyjna](img/lab03_5_2_regularyzacja.png)
+
+### Zadanie 6.1 - Zapis wag i wznowienie treningu
+- `wagi_dropout.weights.h5`: nowy model zbudowany tą samą funkcją + `load_weights` daje **identyczne** predykcje (`np.allclose` = `True`), bo Dropout w `predict` jest wyłączony
+- `model_dropout.keras` (1215.2 kB) zawiera architekturę, wagi i optymalizator (`Adam`); po wczytaniu trening wznowiono bez `compile`: `val_accuracy` 0.6325 -> **0.7082**, `val_loss` 0.9400 -> 0.7701 po 2 epokach
+
+### Zadanie dodatkowe - własny callback i CosineDecay
+- `ZatrzymajPrzyDokladnosci(prog=0.89)` zapisuje learning rate i przerywa trening po przekroczeniu progu; optymalizator Adama z harmonogramem `CosineDecay(1e-3, decay_steps = 20 x 391)`
+- trening zatrzymał się po **11 z 20** epok przy `val_accuracy` = **0.8904**; lr zmalał z 9.94e-4 do 4.22e-4
+- próg 0.89 osiągnięto szybciej niż w zad. 1.1 (tam 0.8843 po 15 epokach) - harmonogram obniża krok pod koniec, co stabilizuje końcową fazę treningu
+
+![CosineDecay - learning rate](img/lab03_dodatkowe_cosine.png)
+
+### Wnioski (Lab 03)
+- Pełny trening MLP na CPU jest w zasięgu: 15 epok na 50 000 obrazów to 33 s, a cały notebook (klasyfikacja, regresja, callbacki, optymalizatory, regularyzacja) wykonuje się w kilka minut.
+- Wysokopoziomowe API Keras sprowadza eksperyment do `compile` / `fit` / `evaluate`, a różnice między wariantami wynikają z hiperparametrów, nie z kodu. Ten sam szkielet posłużył do klasyfikacji (softmax + `sparse_categorical_crossentropy`) i regresji (liniowe wyjście + MSE).
+- Krzywe uczenia są podstawową diagnostyką: dla MLP 256-128 minimum `val_loss` wypada w epoce 8, a potem rośnie przy wciąż malejącej stracie treningowej. `EarlyStopping(restore_best_weights=True)` i `ModelCheckpoint` pozwalają zatrzymać trening dokładnie w tym minimum - w zad. 3.1 dało to MAE 0.365 wobec 0.360 bez callbacków.
+- Baseline jest obowiązkowy: dopiero na jego tle widać, że sieć wnosi coś ponad prosty model (MAE 0.360 vs 0.533 dla regresji liniowej i 0.905 dla średniej). Standaryzacja dopasowana tylko na train nie zaburza oceny: średnie cech na zbiorze testowym nie są zerowe, co potwierdza, że statystyki nie wyciekły z testu do treningu.
+- Learning rate to najważniejszy hiperparametr: 1e-4 daje wolny spadek, 1e-3 optimum, a 0.1 rozbieżność (`val_accuracy` 0.606). Wśród optymalizatorów SGD bez momentum jest najsłabszy (0.8354), a metody adaptacyjne osiągają 0.88-0.89.
+- Regularyzacja działa, ale trzeba dobrać jej siłę: Dropout 0.5 zmniejszył lukę train-val z 0.181 do 0.099, L2 z $\lambda = 10^{-3}$ okazał się zbyt silny (spadek `accuracy`), a BatchNorm bez warstw konwolucyjnych nie poprawił wyniku - jego główna rola (stabilizacja treningu) ujawnia się w głębszych sieciach.
+- Model jest elementem cyklu życia: zapis wag i pełnego modelu działa (`np.allclose` = `True`), a wczytany model można trenować dalej bez ponownego `compile` (val 0.6325 -> 0.7082).
+
+### Propozycja usprawnienia (UGŁ_U02)
+Największy zysk dałaby **augmentacja danych + early stopping** dla klasyfikacji: odbicia poziome i niewielkie przesunięcia/obroty zwiększają efektywną liczebność zbioru, co bezpośrednio adresuje lukę train-val 0.05 i mylenie Koszuli z T-shirtem. Równolegle warto zastąpić ręczny `ReduceLROnPlateau` harmonogramem `CosineDecay` z `AdamW(weight_decay=1e-4)` - regularyzacja L2 w optymalizatorze nie zawyża raportowanej straty i lepiej współpracuje z harmonogramem. Docelowo lokalną strukturę obrazu (szwy, kołnierzyk, faktura) powinny wychwycić warstwy konwolucyjne - temat Lab 04.
+
 ## Lab 04
 
 ## Lab 05

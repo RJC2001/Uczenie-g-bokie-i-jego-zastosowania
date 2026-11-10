@@ -152,49 +152,51 @@ Wymień kroki jednej iteracji pętli treningowej PyTorch. Co robią `model.train
 
 Dlaczego w ostatniej warstwie klasyfikatora na 10 klas używamy softmax, a w regresji warstwy liniowej? Co by się stało, gdyby w regresji cen domów użyć sigmoidy?
 
-**Odpowiedź:**
+**Odpowiedź:** Softmax jest potrzebny w klasyfikacji, bo chcemy **rozkładu prawdopodobieństw** nad $K$ klas: zamienia logity $z_k$ na $p_k = e^{z_k}/\sum_j e^{z_j}$, więc $p_k \in (0,1)$ i $\sum_k p_k = 1$. Dokładnie tego wymaga entropia krzyżowa $L = -\log p_y$ i na tym opiera się decyzja `argmax`. W regresji nie ma klas - cel jest dowolną liczbą rzeczywistą (u nas mediana ceny w setkach tysięcy dolarów, zakres 0.15-5.0), więc wyjście musi być liniowe. Sigmoida ścisnęłaby wyjście do $(0,1)$: model mógłby przewidzieć najwyżej 1.0, czyli 100 tys. $, a nigdy 5.0 (500 tys. $), więc cele powyżej 1 byłyby nieosiągalne. Dodatkowo sigmoida nasyca się - dla dużych błędów jej pochodna jest bliska zeru, gradient znika i trening z MSE staje się bardzo wolny.
 
 ### Pytanie 2
 
 Czym różni się `sparse_categorical_crossentropy` od `categorical_crossentropy`? Kiedy używamy której?
 
-**Odpowiedź:**
+**Odpowiedź:** Obie funkcje liczą tę samą stratę $L = -\log p_y$, różnią się formatem etykiet. `categorical_crossentropy` oczekuje **one-hot** o kształcie `(n, K)`, np. klasa 3 -> `[0,0,0,1,0,0,0,0,0,0]`; `sparse_categorical_crossentropy` przyjmuje **liczby całkowite** `(n,)` i sama wybiera odpowiednią kolumnę. Wersja `sparse` oszczędza pamięć (brak macierzy `n x K`, przy 50 000 próbek i 10 klasach to 500 000 dodatkowych floatów) i jest wygodniejsza, gdy etykiety są pojedynczymi indeksami - tak jest w Fashion-MNIST. Wersji `categorical` używamy, gdy etykiety są rozkładami prawdopodobieństwa (label smoothing, mixup, dystylacja wiedzy) albo gdy mamy już one-hot. Typowy błąd to podanie etykiet całkowitych do `categorical_crossentropy` - Keras zgłasza wtedy niezgodność kształtów.
 
 ### Pytanie 3
 
 Dlaczego `StandardScaler` dopasowujemy tylko do zbioru treningowego? Jak nazywa się błąd polegający na dopasowaniu go do całych danych i jakie ma skutki?
 
-**Odpowiedź:**
+**Odpowiedź:** `StandardScaler` uczy się parametrów $\mu$ i $\sigma$ z danych, więc dopasowanie go do całego zbioru oznacza, że statystyki zbioru testowego (a w walidacji krzyżowej - statystyki foldów walidacyjnych) wpływają na przygotowanie danych treningowych. Informacja o rozkładzie danych testowych "przecieka" do treningu. Błąd ten nazywamy **wyciekiem danych** (*data leakage*). Skutki: wynik na zbiorze testowym jest sztucznie optymistyczny (model "widział" skalę i rozkład testu), ocena generalizacji przestaje być uczciwa, a w produkcji nowe dane są przekształcane parametrami, których przy treningu nie było. Poprawnie: `fit` tylko na `X_train`, a `transform` (te same $\mu$, $\sigma$) na train, walidacji i teście. W naszym przebiegu średnie cech po standaryzacji na train są równe 0, a na teście już nie (od -0.021 do 0.030) - i tak ma być.
 
 ### Pytanie 4
 
 Ile parametrów ma warstwa `Dense(64)` po wejściu o wymiarze 8? A `BatchNormalization` po niej (ile z nich jest uczonych gradientowo)?
 
-**Odpowiedź:**
+**Odpowiedź:** Warstwa `Dense(64)` po wejściu o wymiarze 8 ma $8\cdot64 + 64 = \mathbf{576}$ parametrów (512 wag + 64 biasy). `BatchNormalization` po niej ma 4 parametry na cechę: $\gamma$ i $\beta$ (przeskalowanie i przesunięcie) oraz `moving_mean` i `moving_var` (statystyki do wnioskowania). Razem $4\cdot64 = 256$ parametrów, z czego **uczone gradientowo jest 128** ($\gamma$, $\beta$), a pozostałe 128 to bufor aktualizowany średnią kroczącą podczas `fit`, a nie gradientem.
 
 ### Pytanie 5
 
 Co robi `restore_best_weights=True` w `EarlyStopping` i dlaczego jest ważne?
 
-**Odpowiedź:**
+**Odpowiedź:** `restore_best_weights=True` sprawia, że po zatrzymaniu treningu Keras przywraca wagi z epoki, w której monitorowana metryka (np. `val_loss`) była najlepsza - a nie wagi z ostatniej epoki. Ma to znaczenie, bo `EarlyStopping` zatrzymuje trening dopiero po `patience` epokach bez poprawy; w tym czasie model zdążył się już przeuczyć i jego ostatnie wagi są gorsze od najlepszych. Bez tej opcji "wygrywa" model z końca treningu, czyli zwykle gorszy na walidacji. Wagi najlepszej epoki są trzymane w pamięci (dla zapisu na dysk służy `ModelCheckpoint(save_best_only=True)`).
 
 ### Pytanie 6
 
 Wyjaśnij, czym Adam różni się od zwykłego SGD. Dlaczego SGD bez momentum uczy się wolniej?
 
-**Odpowiedź:**
+**Odpowiedź:** SGD robi krok w kierunku przeciwnym do gradientu, ze **wspólnym** learning rate: $w \leftarrow w - \eta g_t$. Adam łączy dwa mechanizmy: momentum (pierwszy moment $m_t$, średnia krocząca gradientów) i RMSprop (drugi moment $v_t$, średnia krocząca kwadratów gradientów) z korekcją obciążenia:
+$$\hat m_t = \frac{m_t}{1-\beta_1^t}, \qquad \hat v_t = \frac{v_t}{1-\beta_2^t}, \qquad w \leftarrow w - \eta\,\frac{\hat m_t}{\sqrt{\hat v_t}+\epsilon}.$$
+Dzięki temu każdy parametr ma **własny, adaptacyjny krok**: kierunki o dużym gradiencie są tłumione, a rzadko aktualizowane przyspieszane. SGD bez momentum uczy się wolniej, bo: (1) ma jeden krok dla wszystkich parametrów, więc w źle uwarunkowanych "wąskich dolinach" oscyluje w poprzek i wolno posuwa się wzdłuż, (2) nie wygładza szumu mini-batchy, (3) tempo ogranicza największa krzywizna - mniejszy lr daje stabilność, ale wolniejszy postęp. W naszym porównaniu (10 epok, ten sam MLP) SGD osiągnął `val_accuracy` 0.8354, SGD+momentum 0.8722, RMSprop 0.8859, a Adam 0.8825.
 
 ### Pytanie 7
 
 Na wykresie strata walidacyjna rośnie od 8. epoki, a treningowa dalej spada. Jak to nazywamy i jakie trzy działania podejmiesz?
 
-**Odpowiedź:**
+**Odpowiedź:** To **przeuczenie** (*overfitting*): model dopasowuje szum zbioru treningowego, więc strata treningowa maleje, a walidacyjna rośnie - rośnie luka między treningiem a walidacją. Trzy działania: (1) **regularyzacja** - Dropout, L2/weight decay, ewentualnie ograniczenie pojemności modelu; (2) **early stopping** na `val_loss` z `restore_best_weights=True`, żeby zatrzymać się w minimum walidacyjnym (w eksperymencie z sekcji 5 minimum wypadło już w 6. epoce); (3) **więcej danych / augmentacja** (albo walidacja krzyżowa przy małym zbiorze). Dodatkowo można zmniejszyć learning rate lub zastosować harmonogram, ale to leczy objaw, nie przyczynę.
 
 ### Pytanie 8
 
 Jak działa Dropout w trakcie treningu, a jak w predykcji? Dlaczego przeskalowuje się aktywacje przez $1/(1-p)$?
 
-**Odpowiedź:**
+**Odpowiedź:** W treningu Dropout($p$) losowo zeruje każdą aktywację z prawdopodobieństwem $p$ w każdym kroku, a pozostałe skaluje przez $1/(1-p)$ (tzw. *inverted dropout*). Sieć nie może polegać na pojedynczych neuronach - uczy się reprezentacji redundantnych, co działa jak uśrednianie wielu "podsieci" i utrudnia zapamiętanie szumu. W predykcji Dropout jest **wyłączony**: wszystkie neurony pracują, nic nie jest zerowane ani skalowane. Skalowanie w treningu przez $1/(1-p)$ wyrównuje **wartość oczekiwaną** aktywacji: jeśli w treningu neuron jest aktywny z prawdopodobieństwem $1-p$, to mnożąc przez $1/(1-p)$ dostajemy oczekiwaną aktywację równą tej w predykcji. Bez tego przeskalowania aktywacje (a więc i logity) w predykcji byłyby średnio $1/(1-p)$ razy większe niż oczekiwane aktywacje w treningu i model dawałby przesunięte, źle skalibrowane wyjścia. W zad. 5.1 Dropout 0.5 zmniejszył lukę `train-val` z 0.181 do 0.099.
 
 ## Lab 04
 

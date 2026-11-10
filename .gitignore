@@ -218,3 +218,7 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Modele zapisywane przez notebooki (Lab03 i kolejne)
+*.keras
+*.weights.h5
