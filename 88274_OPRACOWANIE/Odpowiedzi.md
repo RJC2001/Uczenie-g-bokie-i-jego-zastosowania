@@ -204,49 +204,63 @@ Jak działa Dropout w trakcie treningu, a jak w predykcji? Dlaczego przeskalowuj
 
 Obraz 64x64x3 przechodzi przez `Conv2D(20, kernel_size=5, strides=1, padding="valid")`. Jaki jest kształt wyjścia i ile parametrów ma warstwa?
 
-**Odpowiedź:**
+**Odpowiedź:** `Conv2D(20, kernel_size=5, strides=1, padding="valid")` na wejściu $64\times64\times3$: wymiar wyjścia liczymy ze wzoru $n_{out}=\lfloor (n + 2p - k)/s \rfloor + 1 = \lfloor (64 - 5)/1 \rfloor + 1 = 60$, więc wyjście ma kształt **60×60×20** (`valid` nie dopisuje zer, więc wysokość i szerokość maleją o $k-1 = 4$). Parametry: każdy z 20 filtrów ma $5\cdot5\cdot3 = 75$ wag plus 1 bias, razem $20\cdot(75+1) = \mathbf{1520}$ parametrów (1500 wag + 20 biasów). Liczba parametrów **nie zależy** od rozmiaru obrazu - ten sam filtr jest przesuwany po wszystkich 3600 pozycjach.
 
 ### Pytanie 2
 
 Dlaczego warstwa splotowa ma znacznie mniej parametrów niż warstwa gęsta o porównywalnej liczbie wyjść? Wymień dwie własności splotu, które o tym decydują.
 
-**Odpowiedź:**
+**Odpowiedź:** Decydują dwie własności splotu: (1) **współdzielenie wag** (*weight sharing*) - jeden filtr o rozmiarze $k\times k\times C_{in}$ ma $k^2C_{in}+1$ parametrów i jest używany w **każdym** położeniu, więc liczba wag nie rośnie wraz z $H\cdot W$; (2) **lokalność połączeń** (rzadkie połączenia) - każdy neuron wyjściowy widzi tylko $k\times k\times C_{in}$ sąsiednich wejść, a nie wszystkie piksele jak w `Dense`.
+
+Liczby z notebooka: `Conv2D(32, 3)` na wejściu $32\times32\times3$ ma $3\cdot3\cdot3\cdot32 + 32 = \mathbf{896}$ parametrów, a `Dense(32)` na spłaszczonym obrazie (3072 wejścia) ma $3072\cdot32 + 32 = \mathbf{98\ 336}$ - 110 razy więcej przy tych samych 32 wyjściach. Porównanie przy **równej liczbie wyjść** wypada jeszcze mocniej: splot daje $32\cdot32\cdot32 = 32\ 768$ wyjść za 896 parametrów, a warstwa gęsta z 32 768 wyjściami potrzebowałaby $3072\cdot32\ 768 + 32\ 768 \approx 100{,}7$ mln wag. W zad. 4.1 widać to samo w głowie klasyfikatora: `Flatten` + `Dense(10)` po mapie $8\times8\times128$ to 81 930 parametrów, a `GlobalAveragePooling2D` + `Dense(10)` - 1 290.
 
 ### Pytanie 3
 
 Co robi `MaxPooling2D(2)` i ile ma parametrów? Czym różni się od `GlobalAveragePooling2D`?
 
-**Odpowiedź:**
+**Odpowiedź:** `MaxPooling2D(2)` bierze **maksimum** z każdego okna $2\times2$ i przesuwa się o 2 piksele, więc wysokość i szerokość maleją dwukrotnie ($28\times28\to14\times14$), a liczba kanałów się nie zmienia. Ma **0 parametrów** - niczego się nie uczy, to stała operacja. Daje częściową **niezmienniczość na przesunięcia** (małe przesunięcie obrazu prawie nie zmienia maksimów), zachowuje najsilniejsze aktywacje i zmniejsza liczbę obliczeń w kolejnych warstwach.
+
+`GlobalAveragePooling2D` uśrednia **całą** mapę cech $H\times W$ do jednej liczby, zamieniając tensor $H\times W\times C$ na wektor długości $C$ - też ma 0 parametrów, ale **usuwa informację przestrzenną** (zostaje "ile" danej cechy, a nie "gdzie"). Dlatego stosuje się go tuż przed klasyfikatorem: działa przy dowolnej rozdzielczości wejścia i zastępuje `Flatten` + dużą warstwę gęstą (81 930 → 1 290 parametrów w zad. 4.1). MaxPooling zachowuje siatkę przestrzenną i może być powtarzany w środku sieci; GAP agreguje globalnie i zamyka część splotową.
 
 ### Pytanie 4
 
 Dlaczego warstwy augmentacji w modelu nie zmieniają obrazów podczas `evaluate` i `predict`? Podaj przykład augmentacji, która byłaby **błędem** dla CIFAR-10, i przykład błędnej augmentacji dla MNIST.
 
-**Odpowiedź:**
+**Odpowiedź:** Warstwy augmentacji (podobnie jak `Dropout` i `BatchNormalization`) są **zależne od trybu pracy**: sprawdzają flagę `training`. W `fit` Keras wywołuje model z `training=True` i wtedy losowo przekształcają obrazy, ale w `evaluate`, `predict` oraz w walidacji w trakcie `fit` - z `training=False` - są **identycznością** (zwracają wejście bez zmian). Dzięki temu metryki walidacyjne i testowe są liczone na czystych danych, a augmentacja rozszerza wyłącznie zbiór treningowy.
+
+Błędna augmentacja to taka, która **zmienia znaczenie klasy**. Dla CIFAR-10: odbicie pionowe (`RandomFlip("vertical")`) - pies do góry nogami, samolot "do góry podwoziem" czy przewrócony samochód nie występują w rzeczywistości, więc etykieta przestaje być prawdziwa (podobnie duże obroty, np. o 90°). Dla MNIST: odbicie poziome - cyfry 2, 3, 5 i 7 po odbiciu nie są już poprawnymi cyframi, a obrót o 180° zamienia 6 z 9. Bezpieczne są natomiast małe przesunięcia, przycięcia i obroty o kilka stopni.
 
 ### Pytanie 5
 
 Zapisz wzór bloku residualnego. Dlaczego połączenia residualne ułatwiają trenowanie głębokich sieci? Kiedy skrót wymaga splotu 1x1?
 
-**Odpowiedź:**
+**Odpowiedź:** Blok residualny: $y = \mathrm{ReLU}\big(F(x) + x\big)$, gdzie $F$ to kilka warstw (u nas `Conv2D → BN → ReLU → Conv2D → BN`), a $x$ jest dodawane do wyjścia $F(x)$ przez połączenie pomijające (*skip connection*).
+
+Połączenie residualne ułatwia trening, bo w Jakobianie przejścia pojawia się **jedynka**: $\frac{\partial y}{\partial x} = I + \frac{\partial F}{\partial x}$. Gradient ma więc "autostradę" przez $I$ nawet wtedy, gdy $\partial F/\partial x$ jest bliskie zeru - znikający gradient w głębokich sieciach przestaje być krytyczny. Drugi powód: jeśli optymalnym przekształceniem jest "nic nie zmieniaj", wystarczy wyzerować wagi $F$, zamiast uczyć się odwzorowania tożsamościowego od zera. W zad. 4.1 widać tego efekty: mini-ResNet ma **309 994** parametry (1.8x mniej niż 551 914 w `model_cifar`), osiąga zbliżoną dokładność testową (0.7952 vs 0.8003), ale **wyższą dokładność treningową** (0.8269 vs 0.7947), czyli uczy się szybciej przy mniejszej pojemności.
+
+Skrót wymaga splotu $1\times1$, gdy $F(x)$ i $x$ mają **inny kształt**: inną liczbę kanałów (np. $32\to64$) albo inną rozdzielczość (gdy splot w $F$ ma `strides=2`). Wtedy $x$ przepuszczamy przez `Conv2D(1, 1, strides=..., use_bias=False)` + `BatchNormalization`, żeby dopasować liczbę kanałów i rozmiar - tak jak w funkcji `blok_rezydualny` w notebooku.
 
 ### Pytanie 6
 
 Opisz dwa etapy transfer learningu. Dlaczego w fine-tuningu stosujemy bardzo mały learning rate i dlaczego najpierw trenujemy samą głowę?
 
-**Odpowiedź:**
+**Odpowiedź:** **Etap 1 - ekstrakcja cech:** baza (MobileNetV2 bez głowy klasyfikacyjnej) jest zamrożona (`baza.trainable = False`, 0 trenowalnych parametrów w bazie), a uczymy tylko nową głowę `GlobalAveragePooling2D → Dropout(0.2) → Dense(10)`. W naszym przebiegu to **12 810** parametrów (0.6% całego modelu), 6 epok, 171 s i test accuracy **0.8315**. **Etap 2 - fine-tuning:** odmrażamy górną część bazy (30 ostatnich warstw, m.in. `Conv_1`, `Conv_1_bn`, `out_relu`; 1 539 210 trenowalnych parametrów), rekompilujemy model i **kontynuujemy** trening od epoki, na której skończył się etap 1 (stąd `initial_epoch`), ale z learning rate **1e-5** - dało to 0.8405.
+
+Bardzo mały learning rate jest konieczny, bo wagi ImageNet są już blisko dobrego rozwiązania: duży krok "przestawiłby" wyuczone filtry i zniszczył cechy, które chcemy wykorzystać (*catastrophic forgetting*). Widać to na krzywej: w pierwszej epoce etapu 2 (epoka 7) dokładność treningowa spada z 0.876 do 0.782, ale dzięki małemu lr model odrabia stratę w 2-3 epoki i wychodzi powyżej etapu 1. Najpierw trenujemy samą głowę, bo jest **losowa** - jej gradienty są duże i zaszumione; gdyby baza była wtedy trenowalna, te gradienty spłynęłyby do pretrenowanych wag i rozstroiły je, zanim głowa nauczy się czegokolwiek sensownego. Po etapie 1 głowa daje sensowne predykcje, poprawki propagowane do bazy są małe i fine-tuning tylko je dopracowuje.
 
 ### Pytanie 7
 
 Co się stanie, jeśli obrazy podzielimy przez 255, a potem podamy do `mobilenet_v2.preprocess_input`?
 
-**Odpowiedź:**
+**Odpowiedź:** `mobilenet_v2.preprocess_input` oczekuje pikseli w zakresie **0-255** i liczy $x/127.5 - 1$, czyli mapuje $[0,255]\to[-1,1]$. Jeśli najpierw podzielimy obrazy przez 255 (zakres $[0,1]$), to po `preprocess_input` dostaniemy $[0/127.5-1,\ 1/127.5-1] = [-1,\ -0.9922]$: cały obraz to **prawie stała wartość ok. $-1$**, a kontrast (różnica między najciemniejszym i najjaśniejszym pikselem) kurczy się z 2.0 do 0.008. Sieć dostaje praktycznie jednolity tensor, aktywacje są niemal identyczne dla wszystkich klas, więc dokładność spada do poziomu losowego - i **żaden błąd nie jest zgłaszany**, bo kształty i typy danych się zgadzają. To cichy błąd preprocessingu; poprawnie podajemy surowe obrazy 0-255 (u nas `xc_te_raw`, `uint8`) i wywołujemy `preprocess_input` dokładnie raz.
 
 ### Pytanie 8
 
 Po co wywołujemy `baza(x, training=False)`, skoro i tak ustawiamy `baza.trainable`?
 
-**Odpowiedź:**
+**Odpowiedź:** `baza.trainable` i `baza(x, training=False)` sterują **dwiema różnymi rzeczami**. `trainable` mówi optymalizatorowi, czy wagi warstwy mają być aktualizowane gradientem (przy `False` są pomijane przy aktualizacji, ale nadal biorą udział w przejściu w przód). `training=False` ustawia **tryb działania** warstw, które zachowują się inaczej w treningu i w inferencji: `BatchNormalization` używa wtedy zapamiętanych statystyk (`moving_mean`, `moving_var`) z ImageNet zamiast statystyk bieżącego batcha, a `Dropout` jest wyłączony.
+
+W fine-tuningu chcemy **obu rzeczy naraz**: wagi bazy mają się uczyć, ale normalizacja ma zostać w trybie inferencji. Gdyby BN liczył statystyki z batcha, to przy batchu 64 obrazów z innego rozkładu (CIFAR-10 w 96x96, a nie ImageNet 224x224) średnie i wariancje byłyby głośne i rozstroiłyby statystyki ruchome - na starcie etapu 2 dokładność gwałtownie by spadła, a model musiałby je odbudowywać od zera. Samo `baza.trainable = False` **nie wystarcza**, bo nie zatrzymuje aktualizacji statystyk BN; dlatego bazę wywołujemy zawsze jako `baza(x, training=False)` - także po odmrożeniu warstw.
 
 ## Lab 05
 
